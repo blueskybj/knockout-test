@@ -1,0 +1,426 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>ko datagrid 7o</title>
+<script src="knockout/jquery-1.11.1.min.js"></script>
+
+<!-- json2.js应放置在knockout.js前-->
+<script src="knockout/json2.js"></script>
+<script src="knockout/knockout-3.2.0.js"></script>
+<script  src="knockout/knockout.mapping-latest.debug.js"></script>
+
+<link  href="knockout/resources/themes/aero/dataGrid.css"  rel="stylesheet" type="text/css" />
+<link  href="knockout/resources/themes/aero/pageNaviBar.css"  rel="stylesheet" type="text/css" />
+<link  href="knockout/resources/css/zero.css"  rel="stylesheet" type="text/css" />
+</head>
+
+<body>
+
+<script lang="javascript">
+	var postbox = (function() {
+	    var pb = new ko.subscribable();
+	    return {
+	        subscribe: function(handler, topic) {
+	            pb.subscribe(handler, null, topic)
+	        },        
+	        publish: function(message, topic) {
+	            pb.notifySubscribers(message, topic);
+	        }
+	    };
+	}()); 
+/*
+	postbox.subscribe(function(newValue){
+		if(newValue == true){
+			//alert('TEST IS OK!' + arguments.length);
+		}else{
+			alert('LOST FOCUS!');
+			exitCellEditing();
+		}
+		
+	},'focusTopic');	
+*/
+
+	ko.components.register('TextEditor', {
+	    viewModel: function(params) {
+	    	var self  = this;
+	        //this.val = ko.observable(params && params.initialText || '');
+	        this.focusOrnot =  ko.observable(true);
+	        this.focusOrnot.subscribe(function(newValue){
+	        	postbox.publish(newValue,'focusTopic');
+	        });
+	        
+	       // this.val.subscribe(function(newValue){
+	       // 	alert(arguments.length);
+	       // 	postbox.publish(newValue,'valueChageTopic');
+	       // });	 
+	           
+	        this.data = params.initialText;   
+	     
+	        
+	    },
+	    template: '<input data-bind="value: data, hasFocus:focusOrnot" /> '
+	});
+	
+	ko.components.register('CheckBoxEditor', {
+	    viewModel: function(params) {
+	        //this.val = ko.observableArray([params && params.initialText || '']).extend({ rateLimit: 50 });
+	        this.focusOrnot =  ko.observable(true);
+	        this.focusOrnot.subscribe(function(newValue){
+	        	postbox.publish(newValue,'focusTopic');
+	        });	    	
+	        
+	        this.data = params.initialText.extend({ rateLimit: 50 });  
+	    },
+	    template: '<input type="checkbox" value="FreeFreight" data-bind="checked:data, hasFocus:focusOrnot" />'
+	});	
+	
+	ko.components.register('ComboboxEditor', {
+	    viewModel: function(params) {
+	    	this.options = ko.observable(['Beijing','Shanghai','Guangzhou','Shenzheng']);
+	        //this.val = ko.observable(['Shanghai']);
+	        this.focusOrnot =  ko.observable(true);
+	        this.focusOrnot.subscribe(function(newValue){
+	        	postbox.publish(newValue,'focusTopic');
+	        });	        
+	        
+	        this.data = params.initialText;  
+	    },
+	    template: '<select data-bind="options: options, selectedOptions: data, hasFocus:focusOrnot" ></select>'
+	});	
+	
+	
+	/**
+	 *  注意： click:function(){changeEditor.bind($data,$index());}将不执行，只能用click:function(){changeEditor($data,$index());}
+	 *  或者click:changeEditor.bind($data,$index()); 两者参数传入的值有区别,前者传回的$data为方法，后者为结果值
+	 *
+	 */
+	ko.components.register('Cell', {
+	    viewModel:  function(params) {
+	    	var self = this;
+	    	self.editortype = ko.observable(params.editortype);
+	    	self.editing = ko.observable(params.editing);
+	    	self.value = ko.observable(params.value);
+	    	
+	    	self.rowIndex = params.rowIndex;
+	    	self.fieldName = params.fieldName;
+	    	
+	    	self.pdata = params.pdata;
+	    	
+	    	
+
+			
+		 	    	
+	    },	
+	    template: "<td data-bind='click:$parents[2].changeEditor.bind($data,$index()) '>\
+				   	<!-- ko if: !editing() -->\
+				   		<span data-bind='text:value()' ></span>\
+				   	<!-- /ko -->\
+					<!-- ko if: editortype() == 'text' && editing -->\
+				   		<div data-bind='component: {name:\"TextEditor\", params:{initialText:value(), pdata:pdata}}'></div>\
+				   	<!-- /ko -->\
+				   	<!-- ko if: editortype() == 'checkbox' && editing -->\
+				   		<div data-bind='component: {name:\"CheckBoxEditor\", params:{initialText:value(), pdata:pdata}}'></div>\
+				   	<!-- /ko -->\
+				   	<!-- ko if: editortype() == 'combobox' && editing -->\
+				   		<div data-bind='component: {name:\"ComboboxEditor\", params:{initialText:value(), pdata:pdata}}'></div>\
+				   	<!-- /ko -->\
+				</td>"
+	});		
+	
+	
+	/*表格组件
+	* 注意：循环中的$data指索引分量，与循环外的$data不同
+	*
+	*/
+	ko.components.register('DataGrid', {
+	    viewModel:  function(configuration){
+			var self = this;
+			
+			//视图模型外传
+			configuration.viewModel = this;
+			
+			//上一个编辑单元
+			self.lastEditCell =  ko.observable({
+				lastCell : null,
+				lastEditingCellIndex : -1,
+				lastEditingRowIndex : -1
+			});			
+			
+			//上次访问页数据
+			self.lastShowPageData = null;
+			
+			//上次访问页
+			self.lastShowPageIndex = null;
+			
+			//列或字段定义
+			self.columnDefine = configuration.columns;
+			
+			//表格数据
+            self.data = configuration.data;
+            
+            //当前页索引
+            self.currentPageIndex = ko.observable(0);
+            
+            //总记录数
+            self.totalRecord = self.data.length;
+            
+            //每页显示记录数
+            self.pageSize = configuration.pageSize || 5;
+            
+            self.showMsg = function(){
+            	alert('TEST Message from DataGrid component.');
+            }
+            
+
+			//编辑时要订阅聚焦消息，以在市区焦点时被触发
+			postbox.subscribe(function(newValue){
+				if(newValue == true){
+					//alert('TEST IS OK!' + arguments.length);
+				}else{
+					alert('LOST FOCUS!');
+					self.exitCellEditing();
+				}
+				
+			},'focusTopic');			
+			
+			self.changeEditor = function (index,data){ 
+				//alert('here!');
+				
+				var lastCell = self.lastEditCell.lastCell;
+				var lastEditingCellIndex = self.lastEditCell.lastEditingCellIndex;
+				var lastEditingRowIndex = self.lastEditCell.lastEditingRowIndex;
+			
+				//如果编辑索引没有改变，多次点击不作处理
+				var rowIndex = data.rowIndex();
+				if(lastEditingCellIndex == index &&  lastEditingRowIndex == rowIndex)
+					return;
+			
+				if(lastCell){
+					lastCell.editing(false);
+				}
+				
+				if(lastEditingCellIndex != index || lastEditingRowIndex != rowIndex){
+					data.editing(true);
+					
+					//保存当前编辑单元为上一编辑单元
+					self.lastEditCell({lastCell:data, lastEditingCell:index, lastEditingRowIndex:rowIndex});
+				}
+			}
+			
+			//退出编辑
+			self.exitCellEditing  = function (){			
+				var lastCell = self.lastEditCell().lastCell;
+				//var lastEditingCellIndex = self.lastEditCell().lastEditingCellIndex;	
+			
+				lastCell.editing(false);
+				//lastEditingCellIndex = -1;	
+			}
+			
+            
+            
+			//列数据，增加编辑状态标识
+			self.columns = ko.observable((function(){
+				var result = [];
+				for(var i=0;i<self.columnDefine.length;i++){
+					var a = self.columnDefine[i];
+					a.editing = false;
+					result.push(ko.observable((self.columnDefine[i])));
+				}
+				
+				return result;
+			})());            
+
+			//最大页索引
+            self.maxPageIndex = ko.computed(function () {
+                return Math.ceil(ko.unwrap(self.data).length / self.pageSize) - 1;
+            }, self);	
+            
+            //翻页
+            self.gotoPage = function(p){
+            	var pageIndex = 0;
+            	
+            	if(p == 'F'){
+            		//跳到第一页
+            	}else if(p=='L'){
+            		//跳到后一页
+            		pageIndex = self.maxPageIndex();
+            	}else if(p=='P'){
+            		pageIndex = Math.max(self.currentPageIndex()-1,0)
+            	}else if(p=='N'){
+            		pageIndex = Math.min(self.currentPageIndex()+1,self.maxPageIndex());
+            	}else if(isNaN(p)){
+            		pageIndex = p;
+            	}
+            
+            	self.currentPageIndex(pageIndex);
+            }
+            
+            
+            //返回页面数据
+            self.itemsOnCurrentPage = ko.computed(function () {
+            	alert('item index changed!');
+            	
+            	var currPageIndex = self.currentPageIndex();
+            	
+            	alert('currentPageIndex:' + currPageIndex);
+            	
+            	//限制输入页面越界
+            	currPageIndex  = Math.max(0,Math.min(currPageIndex, self.pageSize));
+            	
+            	var result = [];                
+                
+	            //将修改值写回原始数组				
+				if(self.lastShowPageData){
+	                var startIndex = self.lastShowPageIndex * self.pageSize;
+	                var endIndex = Math.min(startIndex + self.pageSize, self.data.length);	
+                				
+					var deltaArray = self.lastShowPageData;
+					
+					//showNowValue(deltaArray);
+				
+					for(var i=startIndex;i< endIndex;i++){
+						var data = deltaArray[i];
+						for(var item in data){
+							if(item != '__ko_mapping__')
+								self.data[i][item] = data[item]();
+						}						
+					}                
+                }
+                
+                //将当前页数据写入原数组
+                var start = currPageIndex * self.pageSize;
+                var end = Math.min(start + self.pageSize, self.data.length);                
+               	
+				for(var i=start;i< end;i++){
+					result.push(ko.mapping.fromJS(self.data[i]));
+				}
+				
+				//保存上次操作页索引及数据
+				self.lastShowPageIndex = currPageIndex;
+				self.lastShowPageData = result;
+                
+                return result;
+            }, self);
+
+	
+		},	
+	    template: "\
+	    <div class=\"dataGrid\">\
+	    	<table class=\"grid\" border=\"1\" style=\"border-collapse: collapse\">\
+		        <thead>\
+		            <tr data-bind='foreach: columns'>\
+		               <th><div><span class='adjustCol_left'>&nbsp;</span><span data-bind=\"text: headerText\"></span>\
+		               <span class=\"adjustCol_right\" data-bind=\" \">&nbsp;</span></div></th>\
+		            </tr>\
+		        </thead>\
+				<tbody data-bind=\"foreach: {data: itemsOnCurrentPage, as:'rowData'}\">\
+					<tr data-bind=\"foreach: {data:$parent.columns, as: 'colData'}\">\
+					<!-- ko component:{name:\"Cell\", params:{editortype:editortype, value:$parent[rowText], editing:editing,rowIndex:$parentContext.$index, fieldName:rowText, pdata:rowData[colData.rowText], lastEditCell:$parents[1].lastEditCell}} -->\
+					<!-- /ko -->\
+					</tr>\
+				</tbody>\
+			</table>\
+            <div class=\"pageNaviBar\" style=\"width: 100%; height: 25px;\">\
+            	<span class=\"separator pageNaviSpan\"></span>\
+            	<span class=\"btn pageNaviSpan\" id=\"firstPage\" data-bind=\"click:gotoPage.bind($data,'F')\"></span>\
+            	<span class=\"btn pageNaviSpan\" id=\"previousPage\" data-bind=\"click:gotoPage.bind($data,'P')\"></span>\
+            	<span class=\"separator pageNaviSpan\"></span>\
+            	<div class=\"textEditor\" style=\"width: 14px; height: 21px; float: left; display: inline-block;\">\
+            	<div id=\"inputContainer\"><input style=\"width: 100%;\" type=\"text\" value=\"0\" data-bind=\"value:currentPageIndex\"></div>\
+            	</div>\
+            	<span class=\"pageNaviSpan\" id=\"totalPageSize\" style=\"width: 21px;\" data-bind=\"text:' / '+ pageSize\"></span>\
+            	<span class=\"separator pageNaviSpan\"></span>\
+            	<span class=\"btn pageNaviSpan\" id=\"nextPage\" data-bind=\"click:gotoPage.bind($data,'N')\"></span>\
+            	<span class=\"btn pageNaviSpan\" id=\"lastPage\" data-bind=\"click:gotoPage.bind($data,'L')\"></span>\
+            	<span class=\"separator pageNaviSpan\"></span>\
+            	<span class=\"btn pageNaviSpan\" id=\"refresh\"></span>\
+            	<span class=\"pageInfo pageNaviSpan\">当前总记录<b data-bind=\"text:totalRecord\"> 0</b> 条 ，每页显示<b data-bind=\"text:pageSize\"> 0</b> 条。</span>\
+        	</div>\
+     	</div>"
+	});		 
+</script>
+
+
+
+
+
+<div id="div1" class="mx">	
+	<!-- ko component:{name:"DataGrid",params:inparams}  -->
+	
+	<!-- /ko -->
+</div>
+
+<script lang="javascript">
+
+var columns = [
+	{ headerText: "Item Name", rowText: "name", editortype:"text"},
+    { headerText: "Sales Count", rowText: "sales", editortype:"text"},
+    { headerText: "Price", rowText:"price" , editortype:"text"},
+    { headerText: "FreeFreight", rowText:"freeFreight", editortype:"checkbox"},
+    { headerText: "SupplyCity", rowText:"supplyCity", editortype:"combobox"}
+];
+
+
+var initialData = [
+    { name: "Well-Travelled Kitten", sales: 352, price: 75.95, freeFreight:"Y", supplyCity:"Beijing"},
+    { name: "Speedy Coyote", sales: 89, price: 190.00, freeFreight: "Y", supplyCity:"Shanghai"},
+    { name: "Furious Lizard", sales: 152, price: 25.00, freeFreight: "N", supplyCity:"Guangzhou" },
+    { name: "Indifferent Monkey", sales: 1, price: 99.95, freeFreight: "N", supplyCity:"Beijing" },
+    { name: "Brooding Dragon", sales: 0, price: 6350, freeFreight: "Y", supplyCity:"Shenzhen" },
+    { name: "Ingenious Tadpole", sales: 39450, price: 0.35, freeFreight: "Y", supplyCity:"Shanghai" },
+    { name: "Optimistic Snail", sales: 420, price: 1.50, freeFreight: "Y", supplyCity:"Guangzhou" }    
+];
+
+
+//显示当前值（Knockout数组）
+function showNowValue(a){
+	var str = "";
+	for(var i=0;i<a.length;i++){
+		var data = a[i];
+		for(var item in data){
+			if(item != '__ko_mapping__')
+				str += item + ':' + data[item]() + '\t';
+		}
+		
+		str += '\r';
+	}
+
+	alert(str);
+}
+
+//显示当前值，原生数组
+function showNowValue2(a){
+	var str = "";
+	for(var i=0;i<a.length;i++){
+		var data = a[i];
+		for(var item in data){
+			if(item != '__ko_mapping__')
+				str += item + ':' + data[item] + '\t';
+		}
+		
+		str += '\r';
+	}
+
+	alert(str);
+}
+
+
+//表格参数
+var inparams ={
+	pageSize:3,
+	data:initialData,
+	columns:columns
+}
+
+
+
+ko.applyBindings(null , document.getElementById("div1"));
+ 
+
+</script>
+
+</body>
+
+</html>
